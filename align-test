@@ -1,6 +1,7 @@
 #!/bin/sh
 
-# script for testing the alignment of the sectors
+# script for testing the alignment of filesystems constructed using our
+# suggested parameters
 
 # cluster size is fixed to 32k by the SD card standard; this is a good value
 # in general for ensuring cluster size is a multiple of page size
