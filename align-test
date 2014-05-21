@@ -44,7 +44,7 @@ while [ $sdcard_sectors -le $end_size ]; do
 	dd if=/dev/zero of=test.img bs=512 count=1 seek=$((sdcard_sectors-1)) 2>/dev/null
 
 	read reserved_sectors fat_data_offset_ebs fat_size_bytes fat_sectors<<-EOF
-		`align_reserved_sectors $sdcard_sectors $ERASEBLOCK_SIZE test`
+		`align_reserved_sectors $sdcard_sectors $ERASEBLOCK_SIZE $CLUSTER_SIZE test`
 	EOF
 
 	if [ $fat_sectors -ne $prev_fat_sectors ]; then

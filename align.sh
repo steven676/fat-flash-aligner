@@ -96,11 +96,14 @@ align_reserved_sectors() {
 	shift
 	ERASEBLOCK_SIZE="$1"
 	shift
+	CLUSTER_SIZE="$1"
+	shift
 	if [ x"$1" = x"cluster_align" ]; then
 		cluster_align=1
 		shift
 	fi
 
+	SECTORS_PER_CLUSTER=$(($CLUSTER_SIZE/512))
 	SECTORS_PER_ERASEBLOCK=$(($ERASEBLOCK_SIZE/512))
 	CLUSTERS_PER_ERASEBLOCK=$(($ERASEBLOCK_SIZE/$CLUSTER_SIZE))
 
@@ -151,4 +154,34 @@ align_reserved_sectors() {
 	else
 		echo $reserved_sectors
 	fi
+}
+
+# Select the largest possible cluster size for a given FAT32 filesystem size.
+#
+# The minimum size of a FAT32 data area is 65525 clusters; for a data area this
+# size, the FAT will be 512 sectors.  Adding the minimum reserved sectors gives
+# the minimum allowed FS size for the selected cluster size.
+select_cluster_size() {
+	sdcard_sectors="$1"
+	eraseblock_size="$2"
+	no_cluster_align="$3"
+	sectors_per_eraseblock=$(($eraseblock_size / 512))
+
+	# Start at the maximum "normal" cluster size of 32 KB
+	cluster_size=32768
+
+	while [ $cluster_size -ge 512 ]; do
+		sectors_per_cluster=$(($cluster_size / 512))
+
+		reserved_sectors=$MIN_RESERVED_SECTORS
+		[ -z "$no_cluster_align" ] && reserved_sectors=$(( $(div_round_up $reserved_sectors $sectors_per_cluster) * $sectors_per_cluster ))
+		data_offset_ebs=$(div_round_up $(($reserved_sectors + $NUM_FATS*512)) $sectors_per_eraseblock)
+
+		minimum_fs_size=$((65525*$sectors_per_cluster + $data_offset_ebs*$sectors_per_eraseblock))
+		[ $sdcard_sectors -ge $minimum_fs_size ] && break
+
+		cluster_size=$(($cluster_size / 2))
+	done
+
+	echo $cluster_size
 }
