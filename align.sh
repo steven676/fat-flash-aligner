@@ -86,10 +86,20 @@ div_round_up() {
 # The actual computations below follow the process described above, though
 # they're complicated by the need in many places to round to the nearest whole
 # unit when dividing.
+#
+# When cluster alignment is enabled, the alignment algorithm also assures that
+# the FAT size and reserved sector count are a multiple of the cluster size by
+# rounding up to the nearest cluster boundary in the appropriate places.
 
 align_reserved_sectors() {
 	sdcard_sectors="$1"
-	ERASEBLOCK_SIZE="$2"
+	shift
+	ERASEBLOCK_SIZE="$1"
+	shift
+	if [ x"$1" = x"cluster_align" ]; then
+		cluster_align=1
+		shift
+	fi
 
 	SECTORS_PER_ERASEBLOCK=$(($ERASEBLOCK_SIZE/512))
 	CLUSTERS_PER_ERASEBLOCK=$(($ERASEBLOCK_SIZE/$CLUSTER_SIZE))
@@ -103,25 +113,39 @@ align_reserved_sectors() {
 	# sectors if they exist.
 	sdcard_clusters=$(($sdcard_sectors/$SECTORS_PER_CLUSTER))
 
+	# Start reserved_sectors at the minimum
+	reserved_sectors=$MIN_RESERVED_SECTORS
+	if [ "$cluster_align" ]; then
+		# Reserved sectors needs to be a multiple of the cluster size
+		reserved_sectors=$(( $(div_round_up $reserved_sectors $SECTORS_PER_CLUSTER) * $SECTORS_PER_CLUSTER ))
+	fi
+
 	# Calculate the maximal FAT size in bytes (rounded up to the nearest
 	# whole chunk), then round the size up to the nearest whole sector
-	fat_size_bytes=$((4*$(div_round_up $((($sdcard_clusters*$SECTORS_PER_CLUSTER - $MIN_RESERVED_SECTORS)*512 - 8*$NUM_FATS)) $(($CLUSTER_SIZE + $NUM_FATS*4))) + 8))
+	fat_size_bytes=$((4*$(div_round_up $((($sdcard_clusters*$SECTORS_PER_CLUSTER - $reserved_sectors)*512 - 8*$NUM_FATS)) $(($CLUSTER_SIZE + $NUM_FATS*4))) + 8))
 	fat_sectors=$(div_round_up $fat_size_bytes 512)
+	if [ "$cluster_align" ]; then
+		# FAT size needs to be a multiple of the cluster size
+		fat_sectors=$(( $(div_round_up $fat_sectors $SECTORS_PER_CLUSTER) * $SECTORS_PER_CLUSTER ))
+	fi
 
 	# Compute the number of eraseblocks needed to hold the two FATs plus
-	# required reserve sectors (12)
-	fat_data_offset_ebs=$(div_round_up $(($NUM_FATS*$fat_sectors + $MIN_RESERVED_SECTORS)) $SECTORS_PER_ERASEBLOCK)
+	# required reserve sectors
+	fat_data_offset_ebs=$(div_round_up $(($NUM_FATS*$fat_sectors + $reserved_sectors)) $SECTORS_PER_ERASEBLOCK)
 
 	# Calculate the actual FAT size assuming that we set aside whole
 	# eraseblocks to hold reserved sectors and FATs
 	fat_size_bytes=$((($sdcard_clusters - $fat_data_offset_ebs*$CLUSTERS_PER_ERASEBLOCK)*4 + 8))
 	fat_sectors=$(div_round_up $fat_size_bytes 512)
+	if [ "$cluster_align" ]; then
+		fat_sectors=$(( $(div_round_up $fat_sectors $SECTORS_PER_CLUSTER) * $SECTORS_PER_CLUSTER ))
+	fi
 
 	# Compute the final number of reserved sectors needed to pad out the
 	# FATs to eraseblock size
 	reserved_sectors=$(($fat_data_offset_ebs*$SECTORS_PER_ERASEBLOCK - $NUM_FATS * $fat_sectors))
 
-	if [ x"$3" = x"test" ]; then
+	if [ x"$1" = x"test" ]; then
 		# For use by the test suite
 		echo "$reserved_sectors $fat_data_offset_ebs $fat_size_bytes $fat_sectors"
 	else
