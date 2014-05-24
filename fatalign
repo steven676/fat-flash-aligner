@@ -36,16 +36,17 @@ sdcard_sectors="$1"
 eraseblock_size="$2"
 [ "$3" ] && filesystem="$3"
 
+align_option="cluster_align"
+[ "$no_cluster_align" ] && align_option=""
+
 # Select the largest possible cluster size for this filesystem
-cluster_size="`select_cluster_size $sdcard_sectors $eraseblock_size $no_cluster_align`"
+cluster_size="`select_cluster_size $sdcard_sectors $eraseblock_size $align_option`"
 if [ $cluster_size -lt 512 ]; then
 	echo "Filesystem is too small to hold an aligned FAT32 filesystem!"
 	exit 1
 fi
 sectors_per_cluster=$(($cluster_size / 512))
 
-align_option="cluster_align"
-[ "$no_cluster_align" ] && align_option=""
 reserved_sectors="`align_reserved_sectors $sdcard_sectors $eraseblock_size $cluster_size $align_option`"
 
 echo "Cluster size: $cluster_size bytes"

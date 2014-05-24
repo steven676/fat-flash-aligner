@@ -180,8 +180,14 @@ align_reserved_sectors() {
 # size.
 select_cluster_size() {
 	sdcard_sectors="$1"
-	eraseblock_size="$2"
-	no_cluster_align="$3"
+	shift
+	eraseblock_size="$1"
+	shift
+	if [ x"$1" = x"cluster_align" ]; then
+		cluster_align=1
+		shift
+	fi
+
 	sectors_per_eraseblock=$(($eraseblock_size / 512))
 
 	# Start at the maximum "normal" cluster size of 32 KB
@@ -191,7 +197,7 @@ select_cluster_size() {
 		sectors_per_cluster=$(($cluster_size / 512))
 
 		reserved_sectors=$MIN_RESERVED_SECTORS
-		[ -z "$no_cluster_align" ] && reserved_sectors=$(( $(div_round_up $reserved_sectors $sectors_per_cluster) * $sectors_per_cluster ))
+		[ "$cluster_align" ] && reserved_sectors=$(( $(div_round_up $reserved_sectors $sectors_per_cluster) * $sectors_per_cluster ))
 		data_offset_ebs=$(div_round_up $(($reserved_sectors + $NUM_FATS*512)) $sectors_per_eraseblock)
 
 		minimum_fs_size=$(($FAT32_MIN_CLUSTERS*$sectors_per_cluster + $data_offset_ebs*$sectors_per_eraseblock))
