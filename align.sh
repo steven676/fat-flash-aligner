@@ -119,8 +119,18 @@ align_reserved_sectors() {
 	# Start reserved_sectors at the minimum
 	reserved_sectors=$MIN_RESERVED_SECTORS
 	if [ "$cluster_align" ]; then
-		# Reserved sectors needs to be a multiple of the cluster size
-		reserved_sectors=$(( $(div_round_up $reserved_sectors $SECTORS_PER_CLUSTER) * $SECTORS_PER_CLUSTER ))
+		# Reserved sectors needs to be a multiple of the cluster size.
+		# However, so does the FAT size, and this imposes the added
+		# restriction that reserved sectors must be an *even* multiple
+		# of the cluster size.
+		#
+		# Why?  Let f be the FAT size, r the reserved area size, and e
+		# the eraseblock size (all expressed in clusters); then we have
+		#    2f + r = eN
+		# where N is some integer.  But since eraseblock size is always
+		# a power of two, as is cluster size, e must be even; therefore,
+		# r must be even as well if this equation is to hold.
+		reserved_sectors=$(( $(div_round_up $reserved_sectors $((2*$SECTORS_PER_CLUSTER))) * (2*$SECTORS_PER_CLUSTER) ))
 	fi
 
 	# Calculate the maximal FAT size in bytes (rounded up to the nearest
