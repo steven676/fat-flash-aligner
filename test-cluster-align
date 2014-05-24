@@ -1,0 +1,150 @@
+#!/bin/sh
+
+# script for testing the alignment of filesystems constructed using our
+# suggested parameters
+
+# Assume 128k eraseblocks for purposes of this test; this is small enough to
+# keep testing times reasonable, but large enough to exercise the alignment
+# code
+ERASEBLOCK_SIZE=131072
+SECTORS_PER_ERASEBLOCK=$(($ERASEBLOCK_SIZE/512))
+
+MKDOSFS=/sbin/mkdosfs
+DOSFSCK=/sbin/dosfsck
+
+. "`dirname $0`"/align.sh
+
+# We are assuming that FATs are cluster-aligned in the discussion below.
+
+# Assuming a cluster size of 8k and a data area starting at sector 1792 (in
+# other words, reserved sectors + FATs = 1792 sectors), we find that the
+# largest cluster-aligned FAT for which we can fit two copies of is 880
+# sectors.  We can track 112638 clusters in a 880-sector FAT; that gives us a
+# data area of 1802208 sectors and a total size of 1804000 sectors.
+#
+# In other words, 1804000 sectors is the largest filesystem with 8k clusters
+# for which two FATs would fit into 1792 sectors (seven 128k eraseblocks).
+start_size=1804000
+
+# We could go up a bit from here, but once we hit 2098208 sectors total, 
+# we should go up to 16k clusters, which means going back to 1280-sector
+# data offsets.  With a 1280-sector data offset, 16k clusters, and FATs that
+# align to cluster boundaries, we max out at 2491584 sectors; let's go one
+# cluster beyond that just for fun.
+end_size=2491616
+
+prev_cluster_size=0
+prev_fat_sectors=0
+prev_data_start=0
+
+sdcard_sectors=$start_size
+while [ $sdcard_sectors -le $end_size ]; do
+	# Create a sparse disk image of the appropriate size
+	rm -f test.img
+	dd if=/dev/zero of=test.img bs=512 count=1 seek=$((sdcard_sectors-1)) 2>/dev/null
+
+	cluster_size="`select_cluster_size $sdcard_sectors $ERASEBLOCK_SIZE cluster_align`"
+	# Check that cluster size is as large as possible
+	if [ $cluster_size -lt 32768 ]; then
+		_next_size=$(($cluster_size*2))
+		_next_size_sectors=$(($_next_size/512))
+		# Minimum data area size is 65529 clusters
+		_min_data_size=$(($FAT32_MIN_CLUSTERS * $_next_size_sectors))
+		# Overhead for this size data area consists of two 512-sector
+		# FATs starting at a cluster-aligned offset, rounded up to
+		# the nearest eraseblock
+		_data_offset=$(( $(div_round_up $((1024 + $_next_size_sectors)) $SECTORS_PER_ERASEBLOCK) * $SECTORS_PER_ERASEBLOCK ))
+		_min_size=$(($_min_data_size + $_data_offset))
+
+		if [ $sdcard_sectors -gt $_min_size ]; then
+			echo "Selected cluster size too small!"
+			echo "Total sectors: $sdcard_sectors"
+			echo "Cluster size: $cluster_size bytes"
+			exit 1
+		fi
+	fi
+	if [ $cluster_size -ne $prev_cluster_size ]; then
+		echo "Cluster size changed"
+		echo "Total sectors: $sdcard_sectors"
+		echo "New cluster size: $cluster_size bytes"
+		echo ""
+		prev_cluster_size=$cluster_size
+	fi
+	sectors_per_cluster=$(($cluster_size/512))
+
+	read reserved_sectors fat_data_offset_ebs fat_size_bytes fat_sectors<<-EOF
+		`align_reserved_sectors $sdcard_sectors $ERASEBLOCK_SIZE $cluster_size cluster_align test`
+	EOF
+
+	if [ $fat_sectors -ne $prev_fat_sectors ]; then
+		echo "FAT size changed"
+		echo "Total sectors: $sdcard_sectors"
+		echo "New FAT size: $fat_sectors sectors"
+		prev_fat_sectors=$fat_sectors
+	fi
+
+	min_reserved=$(($(div_round_up $MIN_RESERVED_SECTORS $sectors_per_cluster) * $sectors_per_cluster))
+	if [ $reserved_sectors -lt $min_reserved ]; then
+		echo "Minimum reserved sectors requirement not met!"
+		echo "Total sectors: $sdcard_sectors"
+		echo "Reserved sectors (computed): $reserved_sectors"
+		exit 1
+	elif [ $reserved_sectors -ge $(($SECTORS_PER_ERASEBLOCK + $min_reserved)) ]; then
+		sdcard_clusters=$(($sdcard_sectors/$sectors_per_cluster))
+
+		# Check to see whether the estimated FAT size was too large
+		_candidate_data_offset=$((($fat_data_offset_ebs - 1)*$SECTORS_PER_ERASEBLOCK))
+		_candidate_data_sectors=$(($sdcard_clusters*$sectors_per_cluster - $_candidate_data_offset))
+		_candidate_fat_size_bytes=$((4*($_candidate_data_sectors/$sectors_per_cluster) + 8))
+		_candidate_fat_sectors=$(($(div_round_up $_candidate_fat_size_bytes $cluster_size) * $sectors_per_cluster))
+		if [ $((2*$_candidate_fat_sectors + $min_reserved)) -le $_candidate_data_offset ]; then
+			echo "Overly large reserved sector area detected!"
+			echo "Total sectors: $sdcard_sectors"
+			echo "Reserved sectors (computed): $reserved_sectors"
+			echo "Proposed data offset: $_candidate_data_offset sectors"
+			echo "Proposed FAT size: $_candidate_fat_sectors sectors"
+			exit 1
+		fi
+	fi
+
+	$MKDOSFS -F 32 -s $sectors_per_cluster -R $reserved_sectors test.img > /dev/null
+	if [ $? -ne 0 ]; then
+		echo "mkdosfs failed!"
+		echo "Total sectors: $sdcard_sectors"
+		echo "Reserved sectors (computed): $reserved_sectors"
+		exit 1
+	fi
+
+	fsck_output="`$DOSFSCK -v test.img`"
+	data_start="`echo "$fsck_output" | grep '^Data area starts at byte' | sed -e 's/^Data area starts at byte \(.*\) (.*$/\1/'`"
+	fat_start="`echo "$fsck_output" | grep '^First FAT starts at byte' | sed -e 's/^First FAT starts at byte \(.*\) (.*$/\1/'`"
+
+	if [ $data_start -ne $prev_data_start ]; then
+		echo "Data start moved"
+		echo "Total sectors: $sdcard_sectors"
+		echo "Reserved sectors (computed): $reserved_sectors"
+		echo "New data start: $data_start bytes"
+		echo
+		prev_data_start=$data_start
+	fi
+	
+	if [ $(($data_start/$ERASEBLOCK_SIZE)) -ne $(div_round_up $data_start $ERASEBLOCK_SIZE) ]; then
+		echo "Alignment mismatch!"
+		echo "Total sectors: $sdcard_sectors"
+		echo "Reserved sectors (computed): $reserved_sectors"
+		exit 1
+	fi
+	if [ $(($fat_start/$cluster_size)) -ne $(div_round_up $fat_start $cluster_size) ]; then
+		echo "FAT start not cluster-aligned!"
+		echo "Total sectors: $sdcard_sectors"
+		echo "Reserved sectors (computed): $reserved_sectors"
+		echo "Cluster size: $cluster_size bytes"
+		echo "FAT start: $fat_start bytes"
+		exit 1
+	fi
+	
+	sdcard_sectors=$(($sdcard_sectors + $sectors_per_cluster))
+	#sdcard_sectors=$(($sdcard_sectors + 1))
+done
+
+exit 0
