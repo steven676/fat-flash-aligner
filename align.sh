@@ -22,6 +22,12 @@
 NUM_FATS=2
 MIN_RESERVED_SECTORS=12
 
+# The minimum size of a FAT32 data area is 65525 clusters, but Windows 2000/XP
+# require at least 65527 clusters, and mkdosfs doesn't like to create FAT32
+# filesystems with fewer than 65529 clusters (dosfsck has no issue with smaller
+# filesystems, though).
+FAT32_MIN_CLUSTERS=65529
+
 # Integer division: $1/$2 with fractions always rounded up
 div_round_up() {
         echo $((($1 + $2 - 1)/$2))
@@ -168,9 +174,10 @@ align_reserved_sectors() {
 
 # Select the largest possible cluster size for a given FAT32 filesystem size.
 #
-# The minimum size of a FAT32 data area is 65525 clusters; for a data area this
-# size, the FAT will be 512 sectors.  Adding the minimum reserved sectors gives
-# the minimum allowed FS size for the selected cluster size.
+# The smallest FAT32 data area we're willing to create is 65529 clusters; for a
+# data area this size, the FAT will be 512 sectors.  Adding the minimum
+# reserved sectors gives the minimum allowed FS size for the selected cluster
+# size.
 select_cluster_size() {
 	sdcard_sectors="$1"
 	eraseblock_size="$2"
@@ -187,7 +194,7 @@ select_cluster_size() {
 		[ -z "$no_cluster_align" ] && reserved_sectors=$(( $(div_round_up $reserved_sectors $sectors_per_cluster) * $sectors_per_cluster ))
 		data_offset_ebs=$(div_round_up $(($reserved_sectors + $NUM_FATS*512)) $sectors_per_eraseblock)
 
-		minimum_fs_size=$((65525*$sectors_per_cluster + $data_offset_ebs*$sectors_per_eraseblock))
+		minimum_fs_size=$(($FAT32_MIN_CLUSTERS*$sectors_per_cluster + $data_offset_ebs*$sectors_per_eraseblock))
 		[ $sdcard_sectors -ge $minimum_fs_size ] && break
 
 		cluster_size=$(($cluster_size / 2))
