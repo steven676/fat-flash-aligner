@@ -22,13 +22,13 @@ MKDOSFS=/sbin/mkdosfs
 
 . "`dirname $0`"/align.sh
 
-if [ x"$1" = x"-a" ]; then
-	no_cluster_align=1
+if [ x"$1" = x"-A" ]; then
+	cluster_align=1
 	shift
 fi
 
 if [ $# -lt 2 ]; then
-	echo "Usage: $0 [-a] fs-sectors eraseblock-size [block-device-or-image]"
+	echo "Usage: $0 [-A] fs-sectors eraseblock-size [block-device-or-image]"
 	exit 0
 fi
 
@@ -36,8 +36,8 @@ sdcard_sectors="$1"
 eraseblock_size="$2"
 [ "$3" ] && filesystem="$3"
 
-align_option="cluster_align"
-[ "$no_cluster_align" ] && align_option=""
+align_option=""
+[ "$cluster_align" ] && align_option="cluster_align"
 
 # Select the largest possible cluster size for this filesystem
 cluster_size="`select_cluster_size $sdcard_sectors $eraseblock_size $align_option`"
@@ -54,8 +54,8 @@ echo "Data area alignment: $eraseblock_size bytes"
 echo "Reserved sectors required: $reserved_sectors"
 
 if [ "$filesystem" ]; then
-	align_option=""
-	[ "$no_cluster_align" ] && align_option="-a"
+	align_option="-a"
+	[ "$cluster_align" ] && align_option=""
 	exec "$MKDOSFS" -F 32 -s $sectors_per_cluster -R $reserved_sectors $align_option "$filesystem"
 fi
 
